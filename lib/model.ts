@@ -19,9 +19,14 @@
 // to its users, by family) gives an implied airdrop pool. Against the farm plan's own cash cost,
 // the pool gives the board's second lens: pool dollars per dollar of plan cost.
 //
-// Nothing is keyed to a protocol's name. The same functions score every row; the snapshot's fields
-// (TVL, seven-day change, the day DefiLlama began tracking it, its chains, its category) are the
-// only inputs.
+// No figure is keyed to a protocol's identity: the same functions score every row from the
+// snapshot's fields (TVL, seven-day change, the day DefiLlama began tracking it, its chains, its
+// category). Names enter at exactly one place, eligibility, and there as a stated rule rather
+// than a valuation input: a candidate is excluded when it is a product of another asset or
+// protocol rather than a launch of its own — a wrapped, staked or staking word in its name, an
+// exchange's name first, a versioned release name, or a derivative category (bridges, liquid
+// staking and restaking, exchange tokens). Those exclusions live in isRankable below, printed
+// here so the header and the code say the same thing.
 
 /** The snapshot's protocol entry: exactly the ten fields the sealed input carries. */
 export interface SnapshotProtocol {
@@ -53,6 +58,8 @@ export interface ModelConstants {
   /** Peer multiples are clamped into this band before they value anything. */
   multiple_min: number;
   multiple_max: number;
+  /** The market tier's multiple when the snapshot holds no traded protocol at all. */
+  global_fallback: number;
   /** Growth: the factor moves this far per 100% of seven-day TVL change, inside the clamp band. */
   growth_weight: number;
   growth_floor_pct: number;
@@ -71,6 +78,7 @@ export const MODEL: ModelConstants = {
   min_peers: 4,
   multiple_min: 0.05,
   multiple_max: 2.5,
+  global_fallback: 0.25,
   growth_weight: 0.4,
   growth_floor_pct: -50,
   growth_cap_pct: 100,
@@ -82,13 +90,16 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label, printed on the page and in board.json. */
-export const MODEL_VERSION = 'launch-radar-1';
+export const MODEL_VERSION = 'launch-radar-2';
 
 /**
  * The launch assumptions, by family: the share of FDV that would circulate at launch (float) and
- * the share of supply a launch would allocate to its community of users (allocation). They are the
- * model's stated priors, printed on the methodology panel; the sensitivity table in every detail
- * view shows what the figures become when the multiple moves instead.
+ * the share of supply a launch would allocate to its community of users (allocation). They are
+ * priors — the model's stated assumptions, NOT terms read off the snapshot the way TVL, the peer
+ * multiple and the growth/maturity/reach factors are. They are printed as assumptions on the
+ * methodology panel, and every detail view carries two sensitivities: what the figures become
+ * when the peer multiple moves ±25%, and what the pool becomes when these priors are scaled
+ * ±25% (pool_at_terms_low/high).
  */
 export interface LaunchTerms {
   float_share: number;
@@ -149,7 +160,10 @@ export type MultipleTier = 'category' | 'family' | 'global';
 
 /** One tier's calibrated multiple: the median mcap/TVL of its traded protocols. */
 export interface CalibratedMultiple {
+  /** The multiple in use: the raw median clamped into the model's band. */
   multiple: number;
+  /** The raw median itself, before clamping, kept so the page can print both figures. */
+  raw_multiple: number;
   peers: number;
   tier: MultipleTier;
   family: string | null;
@@ -206,7 +220,7 @@ const clampMultiple = (m: number, model: ModelConstants): number =>
 /** The top peers of a pool by market cap, as evidence: at most six, ratios kept whole. */
 function peerSample(pool: PeerEvidence[]): PeerEvidence[] {
   return [...pool]
-    .sort((a, b) => b.mcap_usd - a.mcap_usd || (a.slug < b.slug ? -1 : 1))
+    .sort((a, b) => b.mcap_usd - a.mcap_usd || (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0))
     .slice(0, 6)
     .map((p) => ({ name: p.name, slug: p.slug, mcap_usd: p.mcap_usd, tvl_usd: p.tvl_usd, ratio: round4(p.ratio) }));
 }
@@ -253,22 +267,31 @@ export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Ca
       }
     }
   }
-  const global: CalibratedMultiple = {
-    multiple: clampMultiple(allRatios.length > 0 ? median(allRatios) : 0.25, model),
-    peers: allRatios.length,
-    tier: 'global',
-    family: null,
-  };
+  // Both figures are kept: the raw median, and the multiple in use after the clamp. The detail
+  // view prints the pair ("median 3.40 -> clamped 2.50") so the clamp is never a hidden term.
+  const calibrated = (raw: number, peers: number, tier: MultipleTier, family: string | null): CalibratedMultiple => ({
+    multiple: clampMultiple(raw, model),
+    raw_multiple: raw,
+    peers,
+    tier,
+    family,
+  });
+  const global: CalibratedMultiple = calibrated(
+    allRatios.length > 0 ? median(allRatios) : model.global_fallback,
+    allRatios.length,
+    'global',
+    null,
+  );
   const byCategory = new Map<string, CalibratedMultiple>();
   for (const [category, ratios] of ratiosByCategory) {
     if (ratios.length >= model.min_peers) {
-      byCategory.set(category, { multiple: clampMultiple(median(ratios), model), peers: ratios.length, tier: 'category', family: null });
+      byCategory.set(category, calibrated(median(ratios), ratios.length, 'category', null));
     }
   }
   const byFamily = new Map<string, CalibratedMultiple>();
   for (const [family, ratios] of ratiosByFamily) {
     if (ratios.length >= model.min_peers) {
-      byFamily.set(family, { multiple: clampMultiple(median(ratios), model), peers: ratios.length, tier: 'family', family });
+      byFamily.set(family, calibrated(median(ratios), ratios.length, 'family', family));
     }
   }
   const sampledCategories = new Map<string, PeerEvidence[]>();
@@ -298,7 +321,10 @@ function multipleFor(
 /** Every term of one row's valuation, as the board and the detail view print them. */
 export interface ValueTerms {
   tvl_usd: number;
+  /** The peer multiple in use: the tier's median clamped into the model's band. */
   peer_multiple: number;
+  /** The tier's raw median before clamping, printed beside the multiple in use. */
+  multiple_raw: number;
   multiple_tier: MultipleTier;
   multiple_family: string | null;
   live_peers: number;
@@ -313,8 +339,17 @@ export interface ValueTerms {
   implied_launch_mcap_usd: number;
   allocation_share: number;
   implied_pool_usd: number;
+  /** The sensitivity multiples: the multiple in use scaled 0.75 / 1.25, then re-clamped into
+   * the same band, so a sensitivity figure never leaves the model's own range. */
+  multiple_low: number;
+  multiple_high: number;
+  /** The FDV recomputed from multiple_low / multiple_high through the same printed chain. */
   fdv_at_multiple_low: number;
   fdv_at_multiple_high: number;
+  /** The pool with the launch priors (float and allocation) scaled 0.75 / 1.25: the pool reads
+   * the allocation share, so it is the allocation, scaled and rounded, that moves it. */
+  pool_at_terms_low: number;
+  pool_at_terms_high: number;
 }
 
 /** A row's risk flags: each one names a fact of the snapshot record, never an opinion. */
@@ -349,7 +384,11 @@ export function valueProtocol(
 ): Valuation {
   const { mult, peers } = multipleFor(p, calib);
   const age = ageDays(asOf, p.listed_at);
-  const growthPct = p.change_7d === null ? null : Math.min(model.growth_cap_pct, Math.max(model.growth_floor_pct, p.change_7d));
+  const growthClamped =
+    p.change_7d === null ? null : Math.min(model.growth_cap_pct, Math.max(model.growth_floor_pct, p.change_7d));
+  // The printed percentage is the term: it is rounded first and the factor is computed from the
+  // rounded value, so the chain a reader multiplies is the chain the program multiplied.
+  const growthPct = growthClamped === null ? null : round2(growthClamped);
   // The FDV is computed from the rounded terms themselves, exactly as the detail view prints
   // them, so a reader who multiplies the printed chain lands on the board's figure to the dollar.
   const growthFactor = round4(1 + ((growthPct ?? 0) / 100) * model.growth_weight);
@@ -360,33 +399,53 @@ export function valueProtocol(
   );
   const extraChains = Math.min(Math.max(p.chains.length - 1, 0), model.reach_max_extra);
   const reachFactor = round4(1 + model.reach_step * extraChains);
-  const fdv = Math.max(1, Math.round(p.tvl_usd * round4(mult.multiple) * growthFactor * maturityFactor * reachFactor));
+  const usedMultiple = round4(mult.multiple);
+  const chain = (multiple: number): number =>
+    Math.max(1, Math.round(p.tvl_usd * multiple * growthFactor * maturityFactor * reachFactor));
+  const fdv = chain(usedMultiple);
+  // Multiple sensitivity: the multiple in use scaled a quarter down/up, then re-clamped into the
+  // model's own band, and the FDV recomputed through the same printed chain. Without the
+  // re-clamp, a row at the band's ceiling would imply 2.50 x 1.25 = 3.125x — a multiple the
+  // model itself refuses everywhere else.
+  const multipleLow = round4(clampMultiple(usedMultiple * 0.75, model));
+  const multipleHigh = round4(clampMultiple(usedMultiple * 1.25, model));
   const launch = launchTermsFor(p.category);
   const terms: ValueTerms = {
     tvl_usd: p.tvl_usd,
-    peer_multiple: round4(mult.multiple),
+    peer_multiple: usedMultiple,
+    multiple_raw: round4(mult.raw_multiple),
     multiple_tier: mult.tier,
     multiple_family: mult.family,
     live_peers: mult.peers,
-    growth_pct: growthPct === null ? null : round2(growthPct),
-    growth_factor: round4(growthFactor),
+    growth_pct: growthPct,
+    growth_factor: growthFactor,
     age_days: age,
-    maturity_factor: round4(maturityFactor),
+    maturity_factor: maturityFactor,
     chain_count: p.chains.length,
-    reach_factor: round4(reachFactor),
+    reach_factor: reachFactor,
     implied_fdv_usd: fdv,
     float_share: launch.float_share,
     implied_launch_mcap_usd: Math.round(fdv * launch.float_share),
     allocation_share: launch.allocation_share,
     implied_pool_usd: Math.round(fdv * launch.allocation_share),
-    fdv_at_multiple_low: Math.max(1, Math.round(fdv * 0.75)),
-    fdv_at_multiple_high: Math.round(fdv * 1.25),
+    multiple_low: multipleLow,
+    multiple_high: multipleHigh,
+    fdv_at_multiple_low: chain(multipleLow),
+    fdv_at_multiple_high: chain(multipleHigh),
+    // Priors sensitivity: the launch priors scaled a quarter down/up together. The pool reads
+    // the allocation share, so it is the allocation — scaled, then rounded exactly as printed —
+    // that moves this figure, and it recomputes from the printed terms like everything else.
+    pool_at_terms_low: Math.round(fdv * round4(launch.allocation_share * 0.75)),
+    pool_at_terms_high: Math.round(fdv * round4(launch.allocation_share * 1.25)),
   };
   const flags: RiskFlag[] = [];
   if (p.change_7d !== null && p.change_7d <= -15) flags.push('DECLINING_TVL');
   if (age !== null && age < 90) flags.push('YOUNG');
   if (p.tvl_usd < 15_000_000) flags.push('THIN_TVL');
   if (p.chains.length <= 1) flags.push('SINGLE_CHAIN');
+  // THIN_PEERS: a tier's median is trusted from min_peers (4) up, but 4-5 peers is still thin
+  // evidence, and the global tier is the whole market's median rather than the protocol's own
+  // kind — both are flagged, exactly as the methodology panel states.
   if (mult.tier === 'global' || mult.peers < 6) flags.push('THIN_PEERS');
   if (p.change_7d === null) flags.push('NO_GROWTH_DATA');
   if (age === null) flags.push('NO_AGE_DATA');
@@ -465,8 +524,9 @@ export function isPreToken(p: SnapshotProtocol): boolean {
 
 /**
  * Whether a protocol is one the board may rank: pre-token, and a launch candidate of its own. The
- * house's watchlist exclusions (versioned name, derivative category, a wrapped or staked word in
- * the name, an exchange's name first) are applied to every candidate, not only above the floor.
+ * exclusions — a versioned release name, a derivative category, a wrapped, staked or staking
+ * word in the name, an exchange's name first — mark products of another asset or protocol, not
+ * launches of their own; they are applied to every candidate, not only above the floor.
  */
 export function isRankable(p: SnapshotProtocol): boolean {
   if (!isPreToken(p)) return false;

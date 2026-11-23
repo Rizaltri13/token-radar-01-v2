@@ -175,6 +175,7 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
       lines.set(key, {
         category: key,
         multiple: row.terms.peer_multiple,
+        raw_multiple: row.terms.multiple_raw,
         peers: row.terms.live_peers,
         tier: row.terms.multiple_tier,
         family: row.terms.multiple_family,
