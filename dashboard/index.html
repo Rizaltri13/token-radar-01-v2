@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launch Radar — pre-token protocols ranked by implied value</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <h1>LAUNCH RADAR</h1>
+    <p class="tag">Pre-token protocols ranked by what their launch would be worth — every value term kept, every figure checkable against the snapshot.</p>
+  </div>
+  <div class="stats" id="stats" aria-label="Board statistics"></div>
+</header>
+
+<section class="method" id="method">
+  <h2>How a row is valued — the whole chain, no hidden terms</h2>
+  <p class="formula">Implied FDV = TVL &times; peer multiple &times; growth factor &times; maturity factor &times; reach factor</p>
+  <div class="terms">
+    <div><strong>Peer multiple.</strong> The market's own verdict: for the protocol's category, the median market-cap&divide;TVL of the protocols in this same snapshot whose token already trades. A category with fewer than 4 traded peers falls back to its family pool (vaults, credit, trading, staking), then to the whole market's median. The tier and the peer count are printed on every row; the peers themselves are listed in its detail view.</div>
+    <div><strong>Growth factor.</strong> 1 + (7-day TVL change, clamped to &minus;50%&hellip;+100%) &times; 0.4. Momentum is a term, not the ranking.</div>
+    <div><strong>Maturity factor.</strong> 0.65 rising to 1.00 across 1,460 days of DefiLlama tracking: a protocol that has run for years with no token recorded is valued nearer its peers than one that appeared last month.</div>
+    <div><strong>Reach factor.</strong> 1 + 0.03 per chain past the first, up to 7 extra chains.</div>
+    <div><strong>Launch terms (stated assumptions).</strong> A float share by family (18&ndash;25% of FDV circulating at launch) gives the implied launch market cap; a community allocation by family (12&ndash;15% of supply) gives the implied airdrop pool. Each plan prices itself in cash and hours, and the board's second lens divides the pool by that cash cost.</div>
+    <div><strong>Grades and flags.</strong> The conviction grade (A&ndash;D) counts how the value was evidenced: its tier, its peer count, complete data, scale. Flags name facts of the record — declining TVL, tracked under 90 days, thin TVL, one chain, thin peers, missing data — never opinions.</div>
+  </div>
+  <p class="caveat">A protocol here <em>records no token</em> in the snapshot (DefiLlama's record, fetched once and frozen); that is not proof it has none. An implied value is this board's own claim, worked out from the snapshot's figures — not a prediction that a token will be issued, or when. Data: <span id="source-line">the sealed snapshot</span>.</p>
+</section>
+
+<main id="app" aria-busy="true"></main>
+<noscript><p style="padding:12px 22px">The board is rendered by app.js from data.js, the dataset main.ts writes beside this page; both ship in the entry, and board.json carries the same rows in the open.</p></noscript>
+
+<footer class="foot">
+  <span id="foot-model"></span>
+  <span>Board, detail and plan are written by one program from one snapshot: the page and board.json cannot disagree.</span>
+</footer>
+
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
